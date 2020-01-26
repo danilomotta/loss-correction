@@ -12,8 +12,7 @@ from keras import backend as K
 from noise import (noisify_with_P, noisify_binary_asymmetric,
                    noisify_cifar10_asymmetric, noisify_mnist_asymmetric,
                    noisify_cifar100_asymmetric)
-from models import MNISTModel, CIFAR10Model, CIFAR100Model
-from models import IMDBModel, LSTMModel
+from models import PriceModel
 from models import NoiseEstimator
 
 np.random.seed(1337)  # for reproducibility
@@ -30,61 +29,22 @@ def build_file_name(loc, dataset, loss, noise, asymmetric, run):
             str(run))
 
 
-def train_and_evaluate(dataset, loss, noise, run=0, num_batch=32,
+def train_and_evaluate(X_train, X_test, y_train, y_test,
+                       dataset, loss, noise, run=0, num_batch=32,
                        asymmetric=0):
 
     val_split = 0.1
 
-    if dataset == 'mnist':
-        kerasModel = MNISTModel(num_batch=num_batch)
-        kerasModel.optimizer = Adagrad()
-    elif dataset == 'cifar10_deep':
-        kerasModel = CIFAR10Model(num_batch=num_batch, type='deep')
-    elif dataset[8:-1] == 'resnet':
-        kerasModel = CIFAR10Model(num_batch=num_batch, type=dataset[8:])
-    elif dataset == 'cifar100':
-        kerasModel = CIFAR100Model(num_batch=num_batch)
-    elif dataset == 'imdb':
-        kerasModel = IMDBModel(num_batch=num_batch)
-        kerasModel.optimizer = Adagrad()
-    elif dataset == 'lstm':
-        kerasModel = LSTMModel(num_batch=num_batch)
-        kerasModel.optimizer = Adagrad(lr=0.001)
-    else:
-        ValueError('No dataset given.')
-        import sys
-        sys.exit()
+    kerasModel = PriceModel(num_batch=num_batch)
+    kerasModel.optimizer = Adagrad()
 
     # an important data-dependent configuration
-    if dataset == 'cifar100':
-        filter_outlier = False
-    else:
-        filter_outlier = True
-
+    filter_outlier = False
+    
     # the data, shuffled and split between train and test sets
     print('Loading %s ...' % dataset)
-    X_train, X_test, y_train, y_test = kerasModel.get_data()
+    # X_train, X_test, y_train, y_test = kerasModel.get_data()
     print('Done.')
-
-    # apply label noise
-    if asymmetric == 0:
-        y_train, P = noisify_with_P(y_train, kerasModel.classes, noise,
-                                    random_state=run)
-    elif asymmetric == 1:
-        if dataset == 'mnist':
-            y_train, P = noisify_mnist_asymmetric(y_train, noise,
-                                                  random_state=run)
-        elif dataset == 'cifar100':
-            y_train, P = noisify_cifar100_asymmetric(y_train, noise,
-                                                     random_state=run)
-        elif dataset[:7] == 'cifar10':
-            y_train, P = noisify_cifar10_asymmetric(y_train, noise,
-                                                    random_state=run)
-        else:  # binary classes
-            y_train, P = noisify_binary_asymmetric(y_train, noise,
-                                                   random_state=run)
-
-    print('T: \n', P)
 
     # convert class vectors to binary class matrices
     Y_train = to_categorical(y_train, kerasModel.classes)
@@ -135,14 +95,14 @@ def train_and_evaluate(dataset, loss, noise, run=0, num_batch=32,
                              filter_outlier=filter_outlier)
         # use all X_train
         P_est = est.fit(X_train).predict()
-        print('T estimated:', P)
+        # print('T estimated:', P)
 
         # compile the model with the new estimated loss
         kerasModel.build_model('forward', P=P_est)
 
     else:
         # compile the model
-        kerasModel.build_model(loss, P)
+        kerasModel.build_model(loss, [])
 
     # fit the model
     history = kerasModel.fit_model(model_file, X_train, Y_train,
@@ -167,45 +127,12 @@ def train_and_evaluate(dataset, loss, noise, run=0, num_batch=32,
 
 
 if __name__ == "__main__":
-
-    def error_and_exit():
-        print('Usage: ' + str(__file__) + ' -d dataset -l loss '
-              '-n noise_rate [-a asymmetric_noise -r n_runs]')
-        sys.exit()
-
-    opts, args = getopt.getopt(sys.argv[1:], "d:l:n:a:r:")
-
-    # dataset/model cases: mnist, imdb, lstm, cifa100
-    # cifar10_resnet{n} with a digit. See the call to cifar10 models
-
-    # loss: crossentropy, backward, forward, unhinged, sigmoid, ramp, savage, boot_soft
+    # loss: crossentropy, est_backward, est_forward, unhinged, sigmoid, ramp, savage, boot_soft
 
     n_runs = 1
     num_batch = 128
-    asymmetric = 0  # symmetric noise by default
 
-    dataset, loss, noise = None, None, None
-
-    for opt, arg in opts:
-        if opt == '-d':
-            dataset = arg
-        elif opt == '-l':
-            loss = arg
-        elif opt == '-n':
-            noise = np.array(arg).astype(np.float)
-        elif opt == '-a':
-            asymmetric = np.array(arg).astype(np.int)
-        elif opt == '-r':
-            n_runs = np.array(arg).astype(np.int)
-        else:
-            error_and_exit()
-
-    # compulsory params
-    if dataset is None or loss is None or noise is None:
-        error_and_exit()
-
-    print("Params: dataset=%s, loss=%s, noise=%s, asymmetric=%d, "
-          % (dataset, loss, noise, asymmetric))
+    loss = ''
 
     accuracies = []
     # implicit random initialization

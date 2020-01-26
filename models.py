@@ -15,8 +15,8 @@ from keras.preprocessing import sequence
 from keras.layers import LSTM
 from keras.optimizers import SGD
 from keras.preprocessing.image import ImageDataGenerator
+from sklearn.preprocessing import StandardScaler
 
-from resnet import cifar10_resnet
 from loss import (crossentropy, robust, unhinged, sigmoid, ramp, savage,
                   boot_soft)
 
@@ -103,7 +103,9 @@ class KerasModel():
 
         # use data augmentation
         if hasattr(self, 'data_generator'):
-
+            print('DATA GENERATOR DISABLED!')
+            return 0
+            
             # hack for using validation with data augmentation
             idx_val = np.round(validation_split * X_train.shape[0]).astype(int)
             X_val, Y_val = X_train[:idx_val], Y_train[:idx_val]
@@ -145,29 +147,28 @@ class KerasModel():
         return pred
 
 
-class MNISTModel(KerasModel):
+class PriceModel(KerasModel):
 
     def __init__(self, num_batch=32):
         self.num_batch = num_batch
-        self.classes = 10
-        self.epochs = 40
+        self.classes = 6
+        self.epochs = 100
         self.normalize = True
         self.optimizer = None
+        self.scaler = StandardScaler()
 
     def load_data(self):
         (X_train, y_train), (X_test, y_test) = mnist.load_data()
-        X_train = X_train.reshape(60000, 784)
-        X_test = X_test.reshape(10000, 784)
 
         if self.normalize:
-            X_train = X_train / 255.
-            X_test = X_test / 255.
+            X_train = self.scaler.fit_transform(X_train)
+            X_test = self.scaler.transform(X_test)
 
         return (X_train, y_train), (X_test, y_test)
 
     def build_model(self, loss, P=None):
 
-        input = Input(shape=(784,))
+        input = Input(shape=(463,))
 
         x = Dense(128, kernel_initializer='he_normal')(input)
         x = Activation('relu')(x)
@@ -175,182 +176,6 @@ class MNISTModel(KerasModel):
         x = Dense(128, kernel_initializer='he_normal')(x)
         x = Activation('relu')(x)
         x = Dropout(0.2)(x)
-        output = Dense(10, kernel_initializer='he_normal')(x)
-
-        if loss in yes_bound:
-            output = BatchNormalization(axis=1)(output)
-
-        if loss in yes_softmax:
-            output = Activation('softmax')(output)
-
-        model = Model(inputs=input, outputs=output)
-        self.compile(model, loss, P)
-
-
-class CIFAR10Model(KerasModel):
-
-    def __init__(self, num_batch=32, type='deep'):
-        self.num_batch = num_batch
-        self.classes = 10
-        self.img_channels = 3
-        self.img_rows = 32
-        self.img_cols = 32
-        self.filters = 32
-        self.num_pool = 2
-        self.num_conv = 3
-        self.type = type
-
-        self.epochs = 120
-        self.augmentation = True
-        self.optimizer = SGD(lr=0.1, momentum=0.9, decay=0.0)
-        self.lr_scheduler()
-        self.decay = 0.0001
-
-    def load_data(self):
-        (X_train, y_train), (X_test, y_test) = cifar10.load_data()
-        X_train = X_train.reshape(X_train.shape[0], self.img_rows,
-                                  self.img_cols, self.img_channels)
-        X_test = X_test.reshape(X_test.shape[0], self.img_rows, self.img_cols,
-                                self.img_channels)
-
-        means = X_train.mean(axis=0)
-        X_train = (X_train - means)
-        X_test = (X_test - means)
-
-        if self.augmentation:
-
-            print('Data Augmentation')
-
-            # data augmentation
-            self.data_generator = \
-                ImageDataGenerator(
-                        width_shift_range=0.1,
-                        height_shift_range=0.1,
-                        horizontal_flip=True)
-
-        # they are 2D originally in cifar
-        y_train = y_train.ravel()
-        y_test = y_test.ravel()
-
-        return (X_train, y_train), (X_test, y_test)
-
-    def lr_scheduler(self):
-
-        def scheduler(epoch):
-            if epoch > 80:
-                return 0.001
-            elif epoch > 40:
-                return 0.01
-            else:
-                return 0.1
-
-        print('LR scheduler')
-        self.scheduler = LearningRateScheduler(scheduler)
-
-    def build_model(self, loss, P=None):
-
-        if self.type[:-1] == 'resnet':
-            model = cifar10_resnet(int(self.type[-1]), self, self.decay, loss)
-
-        self.compile(model, loss, P)
-
-
-class CIFAR100Model(KerasModel):
-
-    def __init__(self, num_batch=32):
-        self.num_batch = num_batch
-        self.classes = 100  # 100 classes
-        self.img_channels = 3
-        self.img_rows = 32
-        self.img_cols = 32
-        self.filters = 32
-        self.num_pool = 2
-        self.num_conv = 3
-
-        self.epochs = 150
-        self.augmentation = True
-        self.optimizer = SGD(lr=0.1, momentum=0.9, decay=0.0)
-        self.decay = 10 ** -3
-        self.lr_scheduler()
-
-    def lr_scheduler(self):
-
-        def scheduler(epoch):
-            if epoch > 120:
-                return 0.001
-            elif epoch > 80:
-                return 0.01
-            else:
-                return 0.1
-
-        print('LR scheduler')
-        self.scheduler = LearningRateScheduler(scheduler)
-
-    def load_data(self):
-        (X_train, y_train), (X_test, y_test) = cifar100.load_data()
-        X_train = X_train.reshape(X_train.shape[0], self.img_rows,
-                                  self.img_cols, self.img_channels)
-        X_test = X_test.reshape(X_test.shape[0], self.img_rows, self.img_cols,
-                                self.img_channels)
-
-        means = X_train.mean(axis=0)
-        # std = np.std(X_train)
-        X_train = (X_train - means)  # / std
-        X_test = (X_test - means)  # / std
-
-        if self.augmentation:
-
-            print('Data Augmentation')
-
-            # data augmentation
-            self.data_generator = \
-                ImageDataGenerator(
-                        width_shift_range=0.1,
-                        height_shift_range=0.1,
-                        horizontal_flip=True)
-
-        # they are 2D originally in cifar
-        y_train = y_train.ravel()
-        y_test = y_test.ravel()
-
-        return (X_train, y_train), (X_test, y_test)
-
-    def build_model(self, loss, P=None):
-
-        model = cifar10_resnet(7, self, self.decay, loss)
-        self.compile(model, loss, P)
-
-
-class IMDBModel(KerasModel):
-
-    def __init__(self, num_batch=32):
-        self.num_batch = num_batch
-        self.max_features = 5000
-        self.maxlen = 400
-        self.embedding_dims = 50
-        self.hidden_dims = 256
-        self.epochs = 50
-        self.classes = 2
-        self.optimizer = None
-
-    def load_data(self):
-        (X_train, y_train), (X_test, y_test) = \
-            imdb.load_data(num_words=self.max_features, seed=11)
-
-        X_train = sequence.pad_sequences(X_train, maxlen=self.maxlen)
-        X_test = sequence.pad_sequences(X_test, maxlen=self.maxlen)
-
-        return (X_train, y_train), (X_test, y_test)
-
-    def build_model(self, loss, P=None):
-
-        input = Input(shape=(self.maxlen,))
-
-        x = Embedding(self.max_features, self.embedding_dims)(input)
-        x = SpatialDropout1D(0.8)(x)
-        x = Activation('relu')(x)
-
-        x = Flatten()(x)
         output = Dense(self.classes, kernel_initializer='he_normal')(x)
 
         if loss in yes_bound:
@@ -361,54 +186,6 @@ class IMDBModel(KerasModel):
 
         model = Model(inputs=input, outputs=output)
         self.compile(model, loss, P)
-
-
-class LSTMModel(KerasModel):
-
-    def __init__(self, num_batch=32):
-        self.num_batch = num_batch
-        self.max_features = 5000
-        self.maxlen = 400
-        self.embedding_dims = 512
-        self.lstm_dim = 512
-        self.hidden_dims = 128
-        self.epochs = 50
-        self.classes = 2
-        self.optimizer = None
-
-    def load_data(self):
-        (X_train, y_train), (X_test, y_test) = \
-            imdb.load_data(num_words=self.max_features, seed=11)
-
-        X_train = sequence.pad_sequences(X_train, maxlen=self.maxlen)
-        X_test = sequence.pad_sequences(X_test, maxlen=self.maxlen)
-
-        return (X_train, y_train), (X_test, y_test)
-
-    def build_model(self, loss, P=None):
-
-        input = Input(shape=(self.maxlen,))
-
-        x = Embedding(self.max_features, self.embedding_dims)(input)
-        x = SpatialDropout1D(0.8)(x)
-
-        x = LSTM(self.lstm_dim, kernel_initializer='uniform')(x)
-
-        x = Dense(self.embedding_dims, kernel_initializer='he_normal')(x)
-        x = Dropout(0.5)(x)
-        x = Activation('relu')(x)
-
-        output = Dense(self.classes, kernel_initializer='he_normal')(x)
-
-        if loss in yes_bound:
-            output = BatchNormalization(axis=1)(output)
-
-        if loss in yes_softmax:
-            output = Activation('softmax')(output)
-
-        model = Model(inputs=input, outputs=output)
-        self.compile(model, loss, P)
-
 
 class NoiseEstimator():
 
